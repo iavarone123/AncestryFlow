@@ -11,13 +11,18 @@ interface TreeVisualizationProps {
 const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResearchAncestors }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const nodesLayerRef = useRef<HTMLDivElement>(null);
   const [selectedMember, setSelectedMember] = useState<FamilyMember | null>(null);
 
   useEffect(() => {
-    if (!svgRef.current || members.length === 0) return;
+    if (!svgRef.current || !nodesLayerRef.current || members.length === 0) return;
 
     const svgElement = d3.select(svgRef.current);
+    const nodesLayer = d3.select(nodesLayerRef.current);
+    
+    // Clear previous content
     svgElement.selectAll("*").remove();
+    nodesLayer.selectAll("*").remove();
 
     const width = containerRef.current?.clientWidth || 800;
     const height = containerRef.current?.clientHeight || 600;
@@ -27,11 +32,11 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResear
       .attr("height", height)
       .attr("viewBox", `0 0 ${width} ${height}`);
 
-    const g = svg.append("g");
-
+    const gLines = svg.append("g").attr("class", "lines-layer");
+    
     const nodeWidth = 230;
-    const nodeHeight = 100;
-    const verticalGap = 180;
+    const nodeHeight = 110; // Slightly increased height for vertical breathing room
+    const verticalGap = 190;
     const horizontalGap = 50;
 
     // 1. Calculate Generations
@@ -110,13 +115,13 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResear
       });
     });
 
-    // 3. Lines
+    // 3. Render Lines in SVG
     members.forEach(m => {
       const pos = nodePositions[m.id];
       m.partners?.forEach(pId => {
         const pPos = nodePositions[pId];
         if (pPos && members.indexOf(m) < members.indexOf(members.find(x => x.id === pId)!)) {
-          g.append("line")
+          gLines.append("line")
             .attr("x1", pos.x + nodeWidth)
             .attr("y1", pos.y + nodeHeight / 2)
             .attr("x2", pPos.x)
@@ -140,7 +145,7 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResear
             const endY = childPos.y;
             const midY = startY + (endY - startY) * 0.5;
             const path = `M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`;
-            g.append("path")
+            gLines.append("path")
               .attr("d", path)
               .attr("fill", "none")
               .attr("stroke", m.status === 'possible' ? '#cbd5e1' : '#475569')
@@ -153,46 +158,45 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResear
       }
     });
 
-    // 4. Nodes
-    const nodes = g.selectAll(".member-node")
+    // 4. Render Nodes in HTML Layer (Robust for PDF export/html2canvas)
+    const nodes = nodesLayer.selectAll(".member-node")
       .data(members)
       .enter()
-      .append("foreignObject")
-      .attr("width", nodeWidth)
-      .attr("height", nodeHeight * 1.5)
-      .attr("x", d => nodePositions[d.id].x)
-      .attr("y", d => nodePositions[d.id].y)
+      .append("div")
+      .attr("class", "absolute cursor-pointer member-node")
+      .style("width", `${nodeWidth}px`)
+      .style("height", `${nodeHeight}px`)
+      .style("left", d => `${nodePositions[d.id].x}px`)
+      .style("top", d => `${nodePositions[d.id].y}px`)
       .on("click", (event, d) => {
         setSelectedMember(d);
         event.stopPropagation();
       });
 
     nodes.each(function(d) {
-      const container = d3.select(this).append("xhtml:div")
-        .style("width", "100%")
-        .style("height", "100%")
-        .attr("class", "cursor-pointer p-1 group");
-
-      const genderClass = d.gender === 'male' ? 'bg-blue-50/50 border-blue-200' : 
-                         (d.gender === 'female' ? 'bg-rose-50/50 border-rose-200' : 'bg-white border-slate-200');
+      const nodeEl = d3.select(this);
+      
+      const genderClass = d.gender === 'male' ? 'bg-blue-50/70 border-blue-200' : 
+                         (d.gender === 'female' ? 'bg-rose-50/70 border-rose-200' : 'bg-white border-slate-200');
       
       const statusBorder = d.status === 'probable' ? 'border-dashed border-amber-300' :
                           (d.status === 'possible' ? 'border-dotted border-slate-300 opacity-75' : 'border-solid shadow-sm');
 
       const vitalBadge = d.vitalStatus === 'living' ? 
-        '<span class="text-[8px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">LIVING</span>' :
-        (d.vitalStatus === 'deceased' ? '<span class="text-[8px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full font-bold">DECEASED</span>' : '');
+        '<span style="line-height: 1" class="text-[8px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-black">LIVING</span>' :
+        (d.vitalStatus === 'deceased' ? '<span style="line-height: 1" class="text-[8px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full font-black">DECEASED</span>' : '');
 
-      container.html(`
-        <div class="h-[90px] p-3 rounded-xl border-2 flex flex-col justify-between transition-all duration-300 group-hover:shadow-md group-hover:border-indigo-400 ${genderClass} ${statusBorder}">
-          <div>
-            <div class="flex items-center justify-between mb-0.5">
-              <span class="text-[8px] font-black uppercase tracking-[0.1em] text-indigo-500/70 truncate mr-2">${d.relationship || 'Relative'}</span>
+      nodeEl.html(`
+        <div class="h-[100px] p-3 rounded-xl border-2 flex flex-col justify-between transition-all duration-300 hover:shadow-md hover:border-indigo-400 bg-white ${genderClass} ${statusBorder}">
+          <div class="flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-0.5" style="line-height: 1.2">
+              <span class="text-[8px] font-black uppercase tracking-[0.1em] text-indigo-500/70 truncate mr-2" style="display: block;">${d.relationship || 'Relative'}</span>
               <i class="fas ${d.gender === 'male' ? 'fa-mars text-blue-400' : (d.gender === 'female' ? 'fa-venus text-rose-400' : 'fa-user text-slate-300')} text-[9px]"></i>
             </div>
-            <h3 class="font-bold text-slate-800 text-xs truncate leading-tight">${d.name}</h3>
+            <!-- Explicit line-height and padding-bottom prevent text clipping in PDF -->
+            <h3 class="font-bold text-slate-800 text-xs overflow-hidden" style="line-height: 1.4; padding-bottom: 2px; white-space: nowrap; text-overflow: ellipsis;">${d.name}</h3>
           </div>
-          <div class="flex items-center justify-between mt-1 pt-1 border-t border-slate-100/50">
+          <div class="flex items-center justify-between mt-1 pt-1 border-t border-slate-100/50" style="line-height: 1.2">
             <p class="text-[9px] text-slate-500 font-bold">${d.birthYear || '????'} — ${d.deathYear || 'Now'}</p>
             ${vitalBadge}
           </div>
@@ -200,12 +204,20 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResear
       `);
     });
 
+    // 5. Unified Zoom logic
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
-      .on("zoom", (event) => g.attr("transform", event.transform));
+      .on("zoom", (event) => {
+        const { transform } = event;
+        gLines.attr("transform", transform);
+        nodesLayer.style("transform", `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`);
+      });
 
     svg.call(zoom);
-    svg.call(zoom.transform, d3.zoomIdentity.translate(width * 0.1, 40).scale(0.85));
+    
+    // Initial Zoom/Position
+    const initialTransform = d3.zoomIdentity.translate(width * 0.1, 40).scale(0.85);
+    svg.call(zoom.transform, initialTransform);
 
   }, [members]);
 
@@ -215,10 +227,23 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members, onResear
       className="relative w-full h-full overflow-hidden bg-white rounded-2xl" 
       ref={containerRef}
     >
-      <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:24px_24px]"></svg>
+      {/* Background layer for grid */}
+      <div className="absolute inset-0 bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none"></div>
+
+      {/* SVG Layer for lines */}
+      <svg ref={svgRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"></svg>
+      
+      {/* HTML Layer for nodes (Essential for capturing boxes in PDF exports) */}
+      <div 
+        ref={nodesLayerRef} 
+        className="absolute inset-0 w-full h-full pointer-events-none" 
+        style={{ transformOrigin: '0 0' }}
+      >
+        {/* Nodes are rendered here by D3 */}
+      </div>
       
       {selectedMember && (
-        <div className="absolute top-4 right-4 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 animate-in slide-in-from-right duration-300 z-40 print:hidden">
+        <div className="absolute top-4 right-4 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 animate-in slide-in-from-right duration-300 z-40 print:hidden pointer-events-auto">
           <div className="flex justify-between items-start mb-6">
             <div>
                <h4 className="font-bold text-slate-900 text-lg">Member Details</h4>
