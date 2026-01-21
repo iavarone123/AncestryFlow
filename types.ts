@@ -34,4 +34,5 @@ export interface ExtractionResult {
   title?: string;
   description?: string;
   sources?: GroundingSource[];
+  estateInfo?: string; // New field for courthouse/probate info
 }
