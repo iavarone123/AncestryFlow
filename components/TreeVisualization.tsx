@@ -17,7 +17,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [zoomLevel, setZoomLevel] = useState(1);
 
-  // Zoom management ref to call D3 zoom programmatically
   const zoomBehaviorRef = useRef<any>(null);
 
   useEffect(() => {
@@ -27,7 +26,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
     const nodesLayer = d3.select(nodesLayerRef.current);
     const container = d3.select(containerRef.current);
     
-    // Clear previous content
     svgElement.selectAll("*").remove();
     nodesLayer.selectAll("*").remove();
 
@@ -37,7 +35,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
     const horizontalGap = 80;
     const padding = 120;
 
-    // 1. Calculate Generations
     const generations: Record<string, number> = {};
     const processed = new Set<string>();
 
@@ -58,7 +55,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
     rootNodes.forEach(r => assignGen(r.id, 0));
     members.forEach(m => { if (!processed.has(m.id)) assignGen(m.id, 0); });
 
-    // 2. Position Nodes
     const genGroups: Record<number, string[]> = {};
     members.forEach(m => {
       const gen = generations[m.id] ?? 0;
@@ -114,7 +110,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
 
     const gLines = svg.append("g").attr("class", "lines-layer");
 
-    // 3. Render Lines
     members.forEach(m => {
       const pos = nodePositions[m.id];
       if (!pos) return;
@@ -158,12 +153,11 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
       }
     });
 
-    // 4. Render Nodes
     const nodes = nodesLayer.selectAll(".member-node")
       .data(members)
       .enter()
       .append("div")
-      .attr("class", "absolute cursor-pointer member-node")
+      .attr("class", "absolute cursor-pointer member-node pointer-events-auto")
       .style("width", `${nodeWidth}px`)
       .style("height", `${nodeHeight}px`)
       .style("left", d => `${nodePositions[d.id]?.x}px`)
@@ -198,7 +192,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
       `);
     });
 
-    // 5. Setup Zoom behavior
     const zoom = d3.zoom()
       .scaleExtent([0.05, 4])
       .on("zoom", (event) => {
@@ -212,7 +205,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
     container.call(zoom as any);
     zoomBehaviorRef.current = zoom;
 
-    // Automatic initial fit-to-view
     const containerWidth = containerRef.current.clientWidth;
     const containerHeight = containerRef.current.clientHeight;
     if (maxWidth > 0 && maxHeight > 0) {
@@ -276,7 +268,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
       className="relative bg-white rounded-[3rem] overflow-hidden custom-scrollbar h-[700px] w-full border border-slate-100 cursor-grab active:cursor-grabbing"
       ref={containerRef}
     >
-      {/* Zoom Controls */}
       <div className="absolute top-6 left-6 z-20 flex flex-col gap-3">
         <button 
           onClick={handleZoomIn}

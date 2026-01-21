@@ -7,7 +7,7 @@ const extractionSchema = {
   properties: {
     title: { type: Type.STRING, description: "A title for this family tree - MUST include the subject's full name." },
     description: { type: Type.STRING, description: "A short summary of the family history." },
-    estateInfo: { type: Type.STRING, description: "ONLY populated for 'Death Record' searches. MUST be empty for Heirs/Ancestry searches." },
+    estateInfo: { type: Type.STRING, description: "ONLY populated for 'Death Record' searches. Otherwise empty." },
     members: {
       type: Type.ARRAY,
       items: {
@@ -40,205 +40,141 @@ const extractionSchema = {
   required: ["members"]
 };
 
-const sanitizeJson = (text: string) => {
-  try {
-    const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    return JSON.parse(cleaned);
-  } catch (e) {
-    console.error("JSON Parse Error:", e, text);
-    return null;
-  }
-};
-
 /**
- * Global Chat/Search helper with Google Search grounding.
+ * Internal helper to perform a grounded search call.
  */
-export const askGemini = async (question: string, context?: ExtractionResult | null): Promise<{ text: string, sources?: GroundingSource[] }> => {
+const performGroundedSearch = async (prompt: string): Promise<{ text: string, sources: GroundingSource[] }> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  let systemInstruction = "You are an expert genealogist. ";
-  if (context && context.members && context.members.length > 0) {
-    systemInstruction += `The user is looking at a family tree with these people: ${context.members.map(m => m.name).join(", ")}. 
-    If they ask for parents or relatives, search specifically for those individuals. 
-    State the names clearly (e.g., 'The parents of X are Y and Z') so the user can easily integrate them into the flowchart.`;
-  } else {
-    systemInstruction += "Perform deep web research to answer genealogy questions with names, dates, and relationships.";
-  }
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: question,
-      config: {
-        systemInstruction: systemInstruction,
-        tools: [{ googleSearch: {} }],
-      },
-    });
+  const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
+    ?.map((chunk: any) => chunk.web)
+    .filter((web: any) => web && web.uri && web.title) || [];
 
-    const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
-      ?.map((chunk: any) => chunk.web)
-      .filter((web: any) => web && web.uri && web.title);
-
-    return {
-      text: response.text || "No records found for that request.",
-      sources: groundingSources || []
-    };
-  } catch (error) {
-    console.error("Chat error:", error);
-    return { text: "Error connecting to research database. Please check your API key and connection." };
-  }
+  return { text: response.text || "", sources };
 };
 
 /**
- * Merges information from a chat response into the existing family tree.
+ * Internal helper to turn raw research text into structured family data.
  */
+const extractLineageFromJson = async (researchText: string, context?: string): Promise<ExtractionResult> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const prompt = `Based on the following research material, extract a structured family tree. 
+  CONTEXT: ${context || 'General Genealogy'}
+  RESEARCH MATERIAL:
+  ---
+  ${researchText}
+  ---
+  Ensure all parent-child and partner relationships are explicitly linked using IDs.`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: extractionSchema,
+    },
+  });
+
+  try {
+    const text = response.text || "{}";
+    const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    return JSON.parse(cleaned) as ExtractionResult;
+  } catch (e) {
+    console.error("Failed to parse AI extraction:", e);
+    return { members: [] };
+  }
+};
+
+export const askGemini = async (question: string, context?: ExtractionResult | null): Promise<{ text: string, sources?: GroundingSource[] }> => {
+  let fullPrompt = question;
+  if (context && context.members.length > 0) {
+    fullPrompt += ` (Context: Current tree includes ${context.members.map(m => m.name).join(", ")})`;
+  }
+  return performGroundedSearch(fullPrompt);
+};
+
 export const mergeChatInfo = async (currentData: ExtractionResult | null, chatText: string, userQuery: string): Promise<ExtractionResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  const prompt = `Task: Update the current family tree by integrating new Research Findings.
-     
-     USER QUERY: "${userQuery}"
-     RESEARCH FINDINGS: "${chatText}"
-     ${currentData ? `CURRENT TREE MEMBERS: ${JSON.stringify(currentData.members.map(m => ({ id: m.id, name: m.name, parents: m.parents })))}` : "CURRENT TREE: Empty"}
-     
-     CRITICAL TARGETING RULE:
-     1. IDENTIFY THE TARGET: Based on the USER QUERY, determine exactly WHICH person in the tree the user is asking about.
-     2. ANCHOR THE NEW DATA: All parent/child information found in the RESEARCH FINDINGS must be linked to that specific TARGET node in the tree.
-     
-     STRUCTURAL LINKING RULES:
-     - If findings name parents for the TARGET:
-        - Create new member nodes for the parents.
-        - UPDATE the existing TARGET person's 'parents' array to include the IDs of these new parent nodes.
-     - ID INTEGRITY: You MUST preserve the 'id' of every person already present in the tree.
-     
-     Return the complete, unified family tree in valid JSON format.`;
+  const prompt = `Integrate these new findings into the existing family tree.
+  USER QUERY: ${userQuery}
+  FINDINGS: ${chatText}
+  EXISTING DATA: ${JSON.stringify(currentData?.members || [])}
+  Return the updated tree structure.`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: extractionSchema,
-      },
-    });
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: extractionSchema,
+    },
+  });
 
-    const result = sanitizeJson(response.text || "{}") || { members: [] };
-    return {
-      ...result,
-      sources: currentData?.sources || []
-    } as ExtractionResult;
-  } catch (error) {
-    console.error("Merge error:", error);
-    throw new Error("Failed to merge findings into the lineage structure.");
-  }
+  const result = JSON.parse(response.text || "{}");
+  return { ...result, sources: currentData?.sources || [] };
 };
 
-/**
- * Initial extraction using Pro model for better reliability.
- */
 export const extractFamilyData = async (
   content: string, 
   inputType: 'text' | 'image' | 'spreadsheet' = 'text',
   mimeType: string = "image/jpeg"
 ): Promise<ExtractionResult> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  let prompt = "";
   if (inputType === 'text') {
-    prompt = `Perform comprehensive genealogy research on: "${content}". Identify immediate heirs, parents, and siblings using verified sources via Google Search.`;
-  } else if (inputType === 'spreadsheet') {
-    prompt = `Map this spreadsheet data to a family tree structure. Data: ${content}`;
-  } else {
-    prompt = `Analyze the document and extract family members, focus on names, dates, and clear parent-child links.`;
+    const research = await performGroundedSearch(`Research the family lineage and heirs of: ${content}`);
+    const result = await extractLineageFromJson(research.text, `Lineage of ${content}`);
+    return { ...result, sources: research.sources };
   }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: inputType !== 'image' ? prompt : [
-        { text: prompt },
-        { inlineData: { mimeType: mimeType, data: content.split(',')[1] } }
-      ],
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: extractionSchema,
-      },
-    });
+  // Non-search paths (images/spreadsheets) can use JSON mode directly
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const prompt = inputType === 'spreadsheet' 
+    ? `Map this spreadsheet data to a family tree: ${content}`
+    : `Extract all family members and relationships from this document.`;
 
-    const result = sanitizeJson(response.text || "{}") || { members: [] };
-    if (result.members?.length > 0 && inputType === 'text') {
-      const root = result.members[0];
-      if (root.name.toLowerCase().includes("subject")) root.name = content;
-    }
-    
-    result.estateInfo = "";
-    const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
-      ?.map((chunk: any) => chunk.web)
-      .filter((web: any) => web && web.uri && web.title);
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: inputType === 'spreadsheet' ? prompt : [
+      { text: prompt },
+      { inlineData: { mimeType, data: content.split(',')[1] } }
+    ],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: extractionSchema,
+    },
+  });
 
-    return { ...result, sources: groundingSources || [] } as ExtractionResult;
-  } catch (error) {
-    console.error("Extraction error:", error);
-    throw new Error(`Lineage extraction failed. This might be due to a technical error or the subject being unsearchable.`);
-  }
+  return JSON.parse(response.text || "{}");
 };
 
 export const researchDeathRecords = async (subject: string): Promise<ExtractionResult> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const prompt = `Research vital death records and obituaries for: "${subject}". Find heirs and probate details.`;
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: extractionSchema,
-      },
-    });
-    const result = sanitizeJson(response.text || "{}") || { members: [] };
-    const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
-      ?.map((chunk: any) => chunk.web)
-      .filter((web: any) => web && web.uri && web.title);
-    return { ...result, sources: groundingSources || [] } as ExtractionResult;
-  } catch (error) {
-    throw new Error("Vital records search failed.");
-  }
+  const research = await performGroundedSearch(`Research vital death records, obituaries, and probate details for: ${subject}`);
+  const result = await extractLineageFromJson(research.text, `Death Records for ${subject}`);
+  return { ...result, sources: research.sources };
+};
+
+export const discoverExtendedFamily = async (members: FamilyMember[], direction: 'forward' | 'backward' = 'forward', targetId?: string): Promise<ExtractionResult> => {
+  const target = targetId ? members.find(m => m.id === targetId) : members[0];
+  const research = await performGroundedSearch(`Find the ${direction === 'forward' ? 'children and heirs' : 'parents and ancestors'} of ${target?.name}.`);
+  const result = await extractLineageFromJson(research.text, `Extended lineage of ${target?.name}`);
+  return { ...result, sources: research.sources };
 };
 
 export const updateFamilyData = async (currentData: ExtractionResult, updateText: string): Promise<ExtractionResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const prompt = `Apply updates to this family tree based on: "${updateText}". Existing data: ${JSON.stringify(currentData)}`;
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: prompt,
-      config: { responseMimeType: "application/json", responseSchema: extractionSchema },
-    });
-    return { ...(sanitizeJson(response.text || "{}") || { members: [] }), sources: currentData.sources };
-  } catch (error) {
-    throw new Error("Record update failed.");
-  }
-};
-
-export const discoverExtendedFamily = async (members: FamilyMember[], direction: 'forward' | 'backward' = 'forward', targetId?: string): Promise<ExtractionResult> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const target = targetId ? members.find(m => m.id === targetId) : members[0];
-  const prompt = `Perform extensive search for ${direction === 'forward' ? 'heirs' : 'ancestors'} of: ${target?.name}. Use Google Search.`;
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: prompt,
-      config: { tools: [{ googleSearch: {} }], responseMimeType: "application/json", responseSchema: extractionSchema },
-    });
-    const result = sanitizeJson(response.text || "{}") || { members: [] };
-    const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
-      ?.map((chunk: any) => chunk.web)
-      .filter((web: any) => web && web.uri && web.title);
-    return { ...result, sources: groundingSources || [] } as ExtractionResult;
-  } catch (error) {
-    throw new Error("Lineage expansion failed.");
-  }
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: `Apply these updates: "${updateText}" to this tree: ${JSON.stringify(currentData.members)}`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: extractionSchema,
+    },
+  });
+  return { ...JSON.parse(response.text || "{}"), sources: currentData.sources };
 };
