@@ -67,7 +67,7 @@ export const askGemini = async (question: string, context?: ExtractionResult | n
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3-pro-preview",
       contents: question,
       config: {
         systemInstruction: systemInstruction,
@@ -85,13 +85,12 @@ export const askGemini = async (question: string, context?: ExtractionResult | n
     };
   } catch (error) {
     console.error("Chat error:", error);
-    return { text: "Error connecting to research database. Please try a more specific name." };
+    return { text: "Error connecting to research database. Please check your API key and connection." };
   }
 };
 
 /**
  * Merges information from a chat response into the existing family tree.
- * userQuery is vital to know WHICH person the user was asking about.
  */
 export const mergeChatInfo = async (currentData: ExtractionResult | null, chatText: string, userQuery: string): Promise<ExtractionResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -103,18 +102,14 @@ export const mergeChatInfo = async (currentData: ExtractionResult | null, chatTe
      ${currentData ? `CURRENT TREE MEMBERS: ${JSON.stringify(currentData.members.map(m => ({ id: m.id, name: m.name, parents: m.parents })))}` : "CURRENT TREE: Empty"}
      
      CRITICAL TARGETING RULE:
-     1. IDENTIFY THE TARGET: Based on the USER QUERY, determine exactly WHICH person in the tree the user is asking about. For example, if the query is "Who were Prince Philip's parents?", the TARGET is "Prince Philip".
+     1. IDENTIFY THE TARGET: Based on the USER QUERY, determine exactly WHICH person in the tree the user is asking about.
      2. ANCHOR THE NEW DATA: All parent/child information found in the RESEARCH FINDINGS must be linked to that specific TARGET node in the tree.
      
      STRUCTURAL LINKING RULES:
      - If findings name parents for the TARGET:
         - Create new member nodes for the parents.
         - UPDATE the existing TARGET person's 'parents' array to include the IDs of these new parent nodes.
-     - If findings name children for the TARGET:
-        - Create new member nodes for the children.
-        - Set the 'parents' array of those new children to include the TARGET's ID.
-     - ID INTEGRITY: You MUST preserve the 'id' of every person already present in the tree. Do not change them.
-     - If the TARGET is not found in the tree (e.g., tree is empty), create the TARGET first, then the parents.
+     - ID INTEGRITY: You MUST preserve the 'id' of every person already present in the tree.
      
      Return the complete, unified family tree in valid JSON format.`;
 
@@ -140,7 +135,7 @@ export const mergeChatInfo = async (currentData: ExtractionResult | null, chatTe
 };
 
 /**
- * Initial extraction.
+ * Initial extraction using Pro model for better reliability.
  */
 export const extractFamilyData = async (
   content: string, 
@@ -151,7 +146,7 @@ export const extractFamilyData = async (
   
   let prompt = "";
   if (inputType === 'text') {
-    prompt = `Research the family and immediate heirs of: "${content}". Use Google Search to find verified relatives.`;
+    prompt = `Perform comprehensive genealogy research on: "${content}". Identify immediate heirs, parents, and siblings using verified sources via Google Search.`;
   } else if (inputType === 'spreadsheet') {
     prompt = `Map this spreadsheet data to a family tree structure. Data: ${content}`;
   } else {
@@ -160,7 +155,7 @@ export const extractFamilyData = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3-pro-preview",
       contents: inputType !== 'image' ? prompt : [
         { text: prompt },
         { inlineData: { mimeType: mimeType, data: content.split(',')[1] } }
@@ -186,7 +181,7 @@ export const extractFamilyData = async (
     return { ...result, sources: groundingSources || [] } as ExtractionResult;
   } catch (error) {
     console.error("Extraction error:", error);
-    throw new Error(`Lineage extraction failed.`);
+    throw new Error(`Lineage extraction failed. This might be due to a technical error or the subject being unsearchable.`);
   }
 };
 
@@ -195,7 +190,7 @@ export const researchDeathRecords = async (subject: string): Promise<ExtractionR
   const prompt = `Research vital death records and obituaries for: "${subject}". Find heirs and probate details.`;
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3-pro-preview",
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -218,7 +213,7 @@ export const updateFamilyData = async (currentData: ExtractionResult, updateText
   const prompt = `Apply updates to this family tree based on: "${updateText}". Existing data: ${JSON.stringify(currentData)}`;
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3-pro-preview",
       contents: prompt,
       config: { responseMimeType: "application/json", responseSchema: extractionSchema },
     });
@@ -234,7 +229,7 @@ export const discoverExtendedFamily = async (members: FamilyMember[], direction:
   const prompt = `Perform extensive search for ${direction === 'forward' ? 'heirs' : 'ancestors'} of: ${target?.name}. Use Google Search.`;
   try {
     const response = await ai.models.generateContent({
-      model: direction === 'backward' ? "gemini-3-pro-preview" : "gemini-3-flash-preview",
+      model: "gemini-3-pro-preview",
       contents: prompt,
       config: { tools: [{ googleSearch: {} }], responseMimeType: "application/json", responseSchema: extractionSchema },
     });

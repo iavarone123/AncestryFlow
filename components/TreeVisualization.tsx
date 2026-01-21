@@ -17,7 +17,7 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [zoomLevel, setZoomLevel] = useState(1);
 
-  // Zoom management
+  // Zoom management ref to call D3 zoom programmatically
   const zoomBehaviorRef = useRef<any>(null);
 
   useEffect(() => {
@@ -198,7 +198,7 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
       `);
     });
 
-    // 5. Setup Zoom with robust handlers
+    // 5. Setup Zoom behavior
     const zoom = d3.zoom()
       .scaleExtent([0.05, 4])
       .on("zoom", (event) => {
@@ -212,13 +212,13 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
     container.call(zoom as any);
     zoomBehaviorRef.current = zoom;
 
-    // Automatic initial fit
-    const w = containerRef.current.clientWidth;
-    const h = containerRef.current.clientHeight;
+    // Automatic initial fit-to-view
+    const containerWidth = containerRef.current.clientWidth;
+    const containerHeight = containerRef.current.clientHeight;
     if (maxWidth > 0 && maxHeight > 0) {
-        const scale = Math.min(w / maxWidth, h / maxHeight) * 0.8;
+        const scale = Math.min(containerWidth / maxWidth, containerHeight / maxHeight) * 0.8;
         container.call(zoom.transform as any, d3.zoomIdentity
-            .translate(w/2, h/2)
+            .translate(containerWidth/2, containerHeight/2)
             .scale(scale)
             .translate(-maxWidth/2, -maxHeight/2)
         );
@@ -235,12 +235,6 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
   const handleZoomOut = () => {
     if (zoomBehaviorRef.current && containerRef.current) {
       d3.select(containerRef.current).transition().duration(300).call(zoomBehaviorRef.current.scaleBy, 0.7);
-    }
-  };
-
-  const handleZoomReset = () => {
-    if (zoomBehaviorRef.current && containerRef.current) {
-      d3.select(containerRef.current).transition().duration(500).call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
     }
   };
 
@@ -262,6 +256,12 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
     }
   };
 
+  const handleZoomReset = () => {
+    if (zoomBehaviorRef.current && containerRef.current) {
+      d3.select(containerRef.current).transition().duration(500).call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+    }
+  };
+
   if (!members || members.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-96 text-slate-400 gap-4">
@@ -280,28 +280,28 @@ const TreeVisualization: React.FC<TreeVisualizationProps> = ({ members = [], onR
       <div className="absolute top-6 left-6 z-20 flex flex-col gap-3">
         <button 
           onClick={handleZoomIn}
-          className="w-12 h-12 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
+          className="w-12 h-12 bg-white/80 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
           title="Zoom In"
         >
           <i className="fas fa-plus"></i>
         </button>
         <button 
           onClick={handleZoomOut}
-          className="w-12 h-12 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
+          className="w-12 h-12 bg-white/80 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
           title="Zoom Out"
         >
           <i className="fas fa-minus"></i>
         </button>
         <button 
           onClick={handleZoomFit}
-          className="w-12 h-12 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
+          className="w-12 h-12 bg-white/80 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
           title="Shrink to Fit"
         >
           <i className="fas fa-compress-arrows-alt"></i>
         </button>
         <button 
           onClick={handleZoomReset}
-          className="w-12 h-12 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
+          className="w-12 h-12 bg-white/80 backdrop-blur-md rounded-2xl shadow-lg border border-slate-100 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 flex items-center justify-center transition-all"
           title="Reset View"
         >
           <i className="fas fa-undo"></i>
